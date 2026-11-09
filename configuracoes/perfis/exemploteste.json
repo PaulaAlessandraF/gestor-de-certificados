@@ -1,0 +1,28 @@
+{
+    "nome": "exemploteste",
+    "arquivo_exemplo": "exemplo_nomes.pdf",
+    "colunas": {
+        "data": [
+            39.7,
+            124.05
+        ],
+        "nome": [
+            128.19,
+            291.93
+        ],
+        "telefone": [
+            296.89,
+            392.83
+        ],
+        "id_certificado": [
+            396.96,
+            512.74
+        ],
+        "link": [
+            517.7,
+            707.92
+        ]
+    },
+    "tolerancia_y": 25,
+    "observacao": "As faixas X são aplicadas às páginas do relatório. Revise se o layout mudar."
+}
