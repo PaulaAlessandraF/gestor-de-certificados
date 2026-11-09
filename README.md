@@ -180,7 +180,6 @@ A posição do nome pode ser ajustada pela opção 4 do menu.
 
 ## Objetivo do projeto
 
-## Objetivo do projeto
 
 Este projeto nasceu da minha experiência trabalhando com design gráfico e da vivência com processos que envolvem a produção e a organização de grandes volumes de certificados.
 
