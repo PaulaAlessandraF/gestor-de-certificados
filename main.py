@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 # CONFIGURAÇÕES GERAIS
 # ==========================================================
 
-CAMINHO_PDF = Path("arquivos/Marina_experience.pdf")
+CAMINHO_PDF = Path("arquivos/exemplo_nome.pdf")
 
 PASTA_RESULTADO = Path("resultado")
 PASTA_DOWNLOADS = PASTA_RESULTADO / "downloads"
