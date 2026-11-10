@@ -6,6 +6,7 @@ import unicodedata
 import asyncio
 import json
 
+from io import BytesIO
 from pathlib import Path
 from collections import defaultdict
 from statistics import median
@@ -17,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 # CONFIGURAÇÕES GERAIS
 # ==========================================================
 
-CAMINHO_PDF = Path("arquivos/exemplo_nomes.pdf")
+CAMINHO_PDF = Path("arquivos/Marina_experience.pdf")
 
 PASTA_RESULTADO = Path("resultado")
 PASTA_DOWNLOADS = PASTA_RESULTADO / "downloads"
@@ -597,7 +598,7 @@ def extrair_id_drive(url):
     return None
 
 
-def criar_url_visualizacao(url):
+def criar_url_download(url):
 
     identificador = extrair_id_drive(url)
 
@@ -608,8 +609,8 @@ def criar_url_visualizacao(url):
         )
 
     return (
-        f"https://drive.google.com/file/d/"
-        f"{identificador}/preview"
+        f"https://drive.google.com/uc?"
+        f"export=download&id={identificador}&confirm=t"
     )
 
 
@@ -623,51 +624,80 @@ async def capturar_certificado(
     destino
 ):
 
-    pagina = await navegador.new_page(
-
-        viewport={
-
-            "width": LARGURA_NAVEGADOR,
-
-            "height": ALTURA_NAVEGADOR
-
-        },
-
-        device_scale_factor=2
-
-    )
+    contexto = await navegador.new_context()
 
     try:
 
-        url_visualizacao = criar_url_visualizacao(
-            url
-        )
+        url_download = criar_url_download(url)
 
-        await pagina.goto(
-
-            url_visualizacao,
-
-            wait_until="domcontentloaded",
-
+        resposta = await contexto.request.get(
+            url_download,
             timeout=60000
-
         )
 
-        await pagina.wait_for_timeout(
-            TEMPO_CARREGAMENTO
-        )
+        if not resposta.ok:
 
-        await pagina.screenshot(
+            raise Exception(
+                f"Falha no download. Status HTTP: {resposta.status}"
+            )
 
-            path=str(destino),
+        conteudo = await resposta.body()
 
-            type="jpeg",
+        if not conteudo:
 
-            quality=95,
+            raise Exception(
+                "O Google Drive retornou um arquivo vazio."
+            )
 
-            full_page=False
+        try:
 
-        )
+            with Image.open(BytesIO(conteudo)) as imagem:
+
+                imagem.load()
+
+                # Preserva imagens transparentes sobre fundo branco.
+                if (
+                    imagem.mode in ("RGBA", "LA")
+                    or "transparency" in imagem.info
+                ):
+
+                    imagem_rgba = imagem.convert("RGBA")
+
+                    imagem_final = Image.new(
+                        "RGB",
+                        imagem_rgba.size,
+                        (255, 255, 255)
+                    )
+
+                    imagem_final.paste(
+                        imagem_rgba,
+                        mask=imagem_rgba.getchannel("A")
+                    )
+
+                else:
+
+                    imagem_final = imagem.convert("RGB")
+
+                destino.parent.mkdir(
+                    parents=True,
+                    exist_ok=True
+                )
+
+                imagem_final.save(
+                    destino,
+                    format="JPEG",
+                    quality=95,
+                    optimize=True
+                )
+
+        except Exception as erro:
+
+            raise Exception(
+                "Não foi possível interpretar o arquivo como imagem. "
+                "Verifique se o link do Google Drive está público "
+                "e aponta para uma imagem JPG ou PNG. "
+                f"Detalhe: {erro}"
+            )
 
         if (
             not destino.exists()
@@ -675,14 +705,14 @@ async def capturar_certificado(
         ):
 
             raise Exception(
-                "A captura não gerou uma imagem válida."
+                "O download não gerou uma imagem válida."
             )
 
         return True
 
     finally:
 
-        await pagina.close()
+        await contexto.dispose()
 
 
 # ==========================================================
@@ -911,10 +941,10 @@ def apagar_perfil():
 # CRIAR PERFIL DE RELATÓRIO
 # ==========================================================
 
+
 def configurar_perfil_relatorio():
 
     try:
-
         import tkinter as tk
 
         from tkinter import (
@@ -935,7 +965,6 @@ def configurar_perfil_relatorio():
         return
 
     raiz = tk.Tk()
-
     raiz.withdraw()
 
     caminho_pdf = filedialog.askopenfilename(
@@ -985,9 +1014,7 @@ def configurar_perfil_relatorio():
 
     try:
 
-        documento = pymupdf.open(
-            caminho_pdf
-        )
+        documento = pymupdf.open(caminho_pdf)
 
         if len(documento) == 0:
 
@@ -998,25 +1025,18 @@ def configurar_perfil_relatorio():
         pagina_pdf = documento[0]
 
         largura_pdf = pagina_pdf.rect.width
-
         altura_pdf = pagina_pdf.rect.height
 
+        # Renderiza a página em resolução maior.
         pix = pagina_pdf.get_pixmap(
-
-            matrix=pymupdf.Matrix(1.5, 1.5),
-
+            matrix=pymupdf.Matrix(2.5, 2.5),
             alpha=False
-
         )
 
-        imagem = Image.frombytes(
-
+        imagem_original = Image.frombytes(
             "RGB",
-
             [pix.width, pix.height],
-
             pix.samples
-
         )
 
         documento.close()
@@ -1032,50 +1052,17 @@ def configurar_perfil_relatorio():
 
         return
 
-    limite_largura = 1100
-
-    limite_altura = 720
-
-    fator = min(
-
-        limite_largura / imagem.width,
-
-        limite_altura / imagem.height,
-
-        1
-
-    )
-
-    tamanho = (
-
-        int(imagem.width * fator),
-
-        int(imagem.height * fator)
-
-    )
-
-    imagem = imagem.resize(tamanho)
-
-    escala_pdf_para_tela = (
-
-        tamanho[0] / largura_pdf,
-
-        tamanho[1] / altura_pdf
-
-    )
+    # Escala entre a imagem renderizada e o PDF original.
+    escala_render_x = pix.width / largura_pdf
+    escala_render_y = pix.height / altura_pdf
 
     # As cinco colunas que o usuário deve selecionar.
-
     campos = [
 
         ("data", "DATA"),
-
         ("nome", "NOME"),
-
         ("telefone", "TELEFONE"),
-
         ("id_certificado", "ID DO CERTIFICADO"),
-
         ("link", "LINK DO CERTIFICADO")
 
     ]
@@ -1088,6 +1075,11 @@ def configurar_perfil_relatorio():
 
     retangulo_id = {"valor": None}
 
+    zoom = {"valor": 1.0}
+
+    foto = {"valor": None}
+
+    # Janela principal.
     janela = tk.Toplevel(raiz)
 
     janela.title(
@@ -1095,97 +1087,313 @@ def configurar_perfil_relatorio():
     )
 
     janela.geometry("1200x850")
-
     janela.minsize(850, 600)
+
+    # ------------------------------------------------------
+    # ÁREA DE CONTROLES
+    # ------------------------------------------------------
+
+    painel_controles = tk.Frame(janela)
+
+    painel_controles.pack(
+        fill="x",
+        padx=10,
+        pady=5
+    )
 
     instrucoes = tk.Label(
 
-        janela,
+        painel_controles,
 
         text=(
             "Arraste o mouse sobre a largura da coluna indicada. "
             "A altura não importa."
         ),
 
-        font=("Arial", 11),
-
-        pady=10
+        font=("Arial", 11)
 
     )
 
-    instrucoes.pack()
+    instrucoes.pack(pady=5)
 
     status = tk.Label(
 
-        janela,
+        painel_controles,
 
         text="",
 
-        font=("Arial", 12, "bold"),
-
-        pady=6
+        font=("Arial", 12, "bold")
 
     )
 
-    status.pack()
+    status.pack(pady=5)
 
-    canvas = tk.Canvas(
+    painel_zoom = tk.Frame(painel_controles)
 
-        janela,
+    painel_zoom.pack(pady=5)
 
-        width=tamanho[0],
-
-        height=tamanho[1],
-
-        cursor="cross",
-
-        bg="white",
-
-        scrollregion=(
-            0,
-            0,
-            tamanho[0],
-            tamanho[1]
-        )
-
+    rotulo_zoom = tk.Label(
+        painel_zoom,
+        text="100%",
+        width=8,
+        font=("Arial", 10, "bold")
     )
 
-    canvas.pack(
+    rotulo_zoom.pack(
+        side="left",
+        padx=5
+    )
+
+    # ------------------------------------------------------
+    # ÁREA DE VISUALIZAÇÃO
+    # ------------------------------------------------------
+
+    area_visualizacao = tk.Frame(janela)
+
+    area_visualizacao.pack(
+        fill="both",
+        expand=True,
         padx=10,
         pady=5
     )
 
-    foto = ImageTk.PhotoImage(
-        imagem
-    )
+    canvas = tk.Canvas(
 
-    canvas.create_image(
+        area_visualizacao,
 
-        0,
-        0,
+        bg="#333333",
 
-        anchor="nw",
+        cursor="cross",
 
-        image=foto
+        highlightthickness=0
 
     )
 
-    canvas.image = foto
+    barra_horizontal = tk.Scrollbar(
 
-    rodape = tk.Label(
+        area_visualizacao,
 
-        janela,
+        orient="horizontal",
 
-        text=(
-            "Selecione do início ao fim da coluna, "
-            "evitando invadir a coluna vizinha."
-        ),
-
-        pady=8
+        command=canvas.xview
 
     )
 
-    rodape.pack()
+    barra_vertical = tk.Scrollbar(
+
+        area_visualizacao,
+
+        orient="vertical",
+
+        command=canvas.yview
+
+    )
+
+    canvas.configure(
+
+        xscrollcommand=barra_horizontal.set,
+
+        yscrollcommand=barra_vertical.set
+
+    )
+
+    barra_vertical.pack(
+        side="right",
+        fill="y"
+    )
+
+    barra_horizontal.pack(
+        side="bottom",
+        fill="x"
+    )
+
+    canvas.pack(
+        side="left",
+        fill="both",
+        expand=True
+    )
+
+    # ------------------------------------------------------
+    # INFORMAÇÕES DE ZOOM
+    # ------------------------------------------------------
+
+    def atualizar_rotulo_zoom():
+
+        rotulo_zoom.config(
+            text=f"{zoom['valor'] * 100:.0f}%"
+        )
+
+    # ------------------------------------------------------
+    # REDIMENSIONAR IMAGEM CONFORME O ZOOM
+    # ------------------------------------------------------
+
+    def atualizar_imagem():
+
+        largura = max(
+            1,
+            int(imagem_original.width * zoom["valor"])
+        )
+
+        altura = max(
+            1,
+            int(imagem_original.height * zoom["valor"])
+        )
+
+        imagem_exibida = imagem_original.resize(
+            (largura, altura),
+            Image.Resampling.LANCZOS
+        )
+
+        foto["valor"] = ImageTk.PhotoImage(
+            imagem_exibida
+        )
+
+        canvas.delete("imagem")
+
+        canvas.create_image(
+
+            0,
+            0,
+
+            anchor="nw",
+
+            image=foto["valor"],
+
+            tags="imagem"
+
+        )
+
+        canvas.configure(
+            scrollregion=(
+                0,
+                0,
+                largura,
+                altura
+            )
+        )
+
+        atualizar_rotulo_zoom()
+
+        # Mantém a imagem atrás dos elementos de seleção.
+        canvas.tag_lower("imagem")
+
+        if retangulo_id["valor"] is not None:
+
+            canvas.delete(
+                retangulo_id["valor"]
+            )
+
+            retangulo_id["valor"] = None
+
+    # ------------------------------------------------------
+    # CONTROLES DE ZOOM
+    # ------------------------------------------------------
+
+    def aumentar_zoom():
+
+        novo_zoom = min(
+            zoom["valor"] * 1.25,
+            5.0
+        )
+
+        if novo_zoom == zoom["valor"]:
+            return
+
+        zoom["valor"] = novo_zoom
+
+        atualizar_imagem()
+
+    def diminuir_zoom():
+
+        novo_zoom = max(
+            zoom["valor"] / 1.25,
+            0.20
+        )
+
+        if novo_zoom == zoom["valor"]:
+            return
+
+        zoom["valor"] = novo_zoom
+
+        atualizar_imagem()
+
+    def ajustar_tela():
+
+        largura_disponivel = max(
+            1,
+            canvas.winfo_width() - 20
+        )
+
+        altura_disponivel = max(
+            1,
+            canvas.winfo_height() - 20
+        )
+
+        fator_largura = (
+            largura_disponivel / imagem_original.width
+        )
+
+        fator_altura = (
+            altura_disponivel / imagem_original.height
+        )
+
+        zoom["valor"] = min(
+            fator_largura,
+            fator_altura,
+            1.0
+        )
+
+        atualizar_imagem()
+
+        canvas.xview_moveto(0)
+        canvas.yview_moveto(0)
+
+    tk.Button(
+
+        painel_zoom,
+
+        text="−",
+
+        width=4,
+
+        command=diminuir_zoom
+
+    ).pack(
+        side="left",
+        padx=3
+    )
+
+    tk.Button(
+
+        painel_zoom,
+
+        text="+",
+
+        width=4,
+
+        command=aumentar_zoom
+
+    ).pack(
+        side="left",
+        padx=3
+    )
+
+    tk.Button(
+
+        painel_zoom,
+
+        text="Ajustar à tela",
+
+        command=ajustar_tela
+
+    ).pack(
+        side="left",
+        padx=5
+    )
+
+    # ------------------------------------------------------
+    # ATUALIZAR ETAPA
+    # ------------------------------------------------------
 
     def atualizar_status():
 
@@ -1202,17 +1410,14 @@ def configurar_perfil_relatorio():
 
         )
 
+    # ------------------------------------------------------
+    # INÍCIO DA SELEÇÃO
+    # ------------------------------------------------------
+
     def ao_pressionar(evento):
 
-        inicio["x"] = max(
-
-            0,
-
-            min(
-                tamanho[0],
-                evento.x
-            )
-
+        inicio["x"] = canvas.canvasx(
+            evento.x
         )
 
         if retangulo_id["valor"] is not None:
@@ -1224,10 +1429,12 @@ def configurar_perfil_relatorio():
         retangulo_id["valor"] = canvas.create_rectangle(
 
             inicio["x"],
+
             5,
 
             inicio["x"],
-            tamanho[1] - 5,
+
+            imagem_original.height * zoom["valor"] - 5,
 
             outline="red",
 
@@ -1235,20 +1442,17 @@ def configurar_perfil_relatorio():
 
         )
 
+    # ------------------------------------------------------
+    # MOVIMENTO DO MOUSE
+    # ------------------------------------------------------
+
     def ao_arrastar(evento):
 
         if inicio["x"] is None:
             return
 
-        x_atual = max(
-
-            0,
-
-            min(
-                tamanho[0],
-                evento.x
-            )
-
+        x_atual = canvas.canvasx(
+            evento.x
         )
 
         canvas.coords(
@@ -1256,12 +1460,18 @@ def configurar_perfil_relatorio():
             retangulo_id["valor"],
 
             inicio["x"],
+
             5,
 
             x_atual,
-            tamanho[1] - 5
+
+            imagem_original.height * zoom["valor"] - 5
 
         )
+
+    # ------------------------------------------------------
+    # FINALIZAÇÃO DA SELEÇÃO
+    # ------------------------------------------------------
 
     def ao_soltar(evento):
 
@@ -1272,10 +1482,7 @@ def configurar_perfil_relatorio():
 
             inicio["x"],
 
-            max(
-                0,
-                min(tamanho[0], evento.x)
-            )
+            canvas.canvasx(evento.x)
 
         )
 
@@ -1283,10 +1490,7 @@ def configurar_perfil_relatorio():
 
             inicio["x"],
 
-            max(
-                0,
-                min(tamanho[0], evento.x)
-            )
+            canvas.canvasx(evento.x)
 
         )
 
@@ -1300,15 +1504,17 @@ def configurar_perfil_relatorio():
 
             )
 
+            inicio["x"] = None
+
             return
 
-        x0_pdf = (
-            x0_tela / escala_pdf_para_tela[0]
-        )
+        # Converte a seleção da tela para a imagem original.
+        x0_imagem = x0_tela / zoom["valor"]
+        x1_imagem = x1_tela / zoom["valor"]
 
-        x1_pdf = (
-            x1_tela / escala_pdf_para_tela[0]
-        )
+        # Converte da imagem renderizada para o PDF original.
+        x0_pdf = x0_imagem / escala_render_x
+        x1_pdf = x1_imagem / escala_render_x
 
         campo, rotulo = campos[
             indice_atual["valor"]
@@ -1325,6 +1531,10 @@ def configurar_perfil_relatorio():
         inicio["x"] = None
 
         indice_atual["valor"] += 1
+
+        # --------------------------------------------------
+        # TODAS AS COLUNAS FORAM SELECIONADAS
+        # --------------------------------------------------
 
         if indice_atual["valor"] == len(campos):
 
@@ -1343,9 +1553,27 @@ def configurar_perfil_relatorio():
                 nome_arquivo = "perfil_relatorio"
 
             destino = (
+
                 PASTA_PERFIS /
+
                 f"{nome_arquivo}.json"
+
             )
+
+            # Evita sobrescrever um perfil existente.
+            contador = 2
+
+            while destino.exists():
+
+                destino = (
+
+                    PASTA_PERFIS /
+
+                    f"{nome_arquivo}_{contador}.json"
+
+                )
+
+                contador += 1
 
             perfil = {
 
@@ -1369,9 +1597,13 @@ def configurar_perfil_relatorio():
             destino.write_text(
 
                 json.dumps(
+
                     perfil,
+
                     ensure_ascii=False,
+
                     indent=4
+
                 ),
 
                 encoding="utf-8"
@@ -1406,7 +1638,6 @@ def configurar_perfil_relatorio():
             )
 
             janela.destroy()
-
             raiz.destroy()
 
             return
@@ -1420,6 +1651,10 @@ def configurar_perfil_relatorio():
             )
 
             retangulo_id["valor"] = None
+
+    # ------------------------------------------------------
+    # EVENTOS DO CANVAS
+    # ------------------------------------------------------
 
     canvas.bind(
         "<ButtonPress-1>",
@@ -1436,7 +1671,28 @@ def configurar_perfil_relatorio():
         ao_soltar
     )
 
+    # Zoom com a roda do mouse.
+    def zoom_mouse(evento):
+
+        if evento.delta > 0:
+            aumentar_zoom()
+        else:
+            diminuir_zoom()
+
+    canvas.bind(
+        "<Control-MouseWheel>",
+        zoom_mouse
+    )
+
+    # ------------------------------------------------------
+    # INICIALIZAÇÃO
+    # ------------------------------------------------------
+
     atualizar_status()
+
+    janela.update_idletasks()
+
+    ajustar_tela()
 
     janela.protocol(
 
